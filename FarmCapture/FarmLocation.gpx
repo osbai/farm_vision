@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="FarmCapture">
+  <metadata>
+    <name>Meknes Farm Walk</name>
+  </metadata>
+  <trk>
+    <name>Farm Boundary Walk</name>
+    <trkseg>
+      <trkpt lat="33.94642" lon="-6.25278"><time>2026-04-09T10:00:00Z</time></trkpt>
+      <trkpt lat="33.94650" lon="-6.25285"><time>2026-04-09T10:00:10Z</time></trkpt>
+      <trkpt lat="33.94660" lon="-6.25288"><time>2026-04-09T10:00:20Z</time></trkpt>
+      <trkpt lat="33.94670" lon="-6.25290"><time>2026-04-09T10:00:30Z</time></trkpt>
+      <trkpt lat="33.94680" lon="-6.25291"><time>2026-04-09T10:00:40Z</time></trkpt>
+      <trkpt lat="33.94690" lon="-6.25290"><time>2026-04-09T10:00:50Z</time></trkpt>
+      <trkpt lat="33.94700" lon="-6.25289"><time>2026-04-09T10:01:00Z</time></trkpt>
+      <trkpt lat="33.94706" lon="-6.25289"><time>2026-04-09T10:01:10Z</time></trkpt>
+      <trkpt lat="33.94710" lon="-6.25280"><time>2026-04-09T10:01:20Z</time></trkpt>
+      <trkpt lat="33.94715" lon="-6.25270"><time>2026-04-09T10:01:30Z</time></trkpt>
+      <trkpt lat="33.94720" lon="-6.25260"><time>2026-04-09T10:01:40Z</time></trkpt>
+      <trkpt lat="33.94725" lon="-6.25250"><time>2026-04-09T10:01:50Z</time></trkpt>
+      <trkpt lat="33.94730" lon="-6.25240"><time>2026-04-09T10:02:00Z</time></trkpt>
+      <trkpt lat="33.94731" lon="-6.25230"><time>2026-04-09T10:02:10Z</time></trkpt>
+      <trkpt lat="33.94731" lon="-6.25219"><time>2026-04-09T10:02:20Z</time></trkpt>
+      <trkpt lat="33.94725" lon="-6.25210"><time>2026-04-09T10:02:30Z</time></trkpt>
+      <trkpt lat="33.94720" lon="-6.25200"><time>2026-04-09T10:02:40Z</time></trkpt>
+      <trkpt lat="33.94710" lon="-6.25195"><time>2026-04-09T10:02:50Z</time></trkpt>
+      <trkpt lat="33.94700" lon="-6.25190"><time>2026-04-09T10:03:00Z</time></trkpt>
+      <trkpt lat="33.94690" lon="-6.25185"><time>2026-04-09T10:03:10Z</time></trkpt>
+      <trkpt lat="33.94680" lon="-6.25183"><time>2026-04-09T10:03:20Z</time></trkpt>
+      <trkpt lat="33.94675" lon="-6.25183"><time>2026-04-09T10:03:30Z</time></trkpt>
+      <trkpt lat="33.94665" lon="-6.25190"><time>2026-04-09T10:03:40Z</time></trkpt>
+      <trkpt lat="33.94660" lon="-6.25200"><time>2026-04-09T10:03:50Z</time></trkpt>
+      <trkpt lat="33.94655" lon="-6.25220"><time>2026-04-09T10:04:00Z</time></trkpt>
+      <trkpt lat="33.94650" lon="-6.25240"><time>2026-04-09T10:04:10Z</time></trkpt>
+      <trkpt lat="33.94645" lon="-6.25260"><time>2026-04-09T10:04:20Z</time></trkpt>
+      <trkpt lat="33.94642" lon="-6.25278"><time>2026-04-09T10:04:30Z</time></trkpt>
+    </trkseg>
+  </trk>
+</gpx>
