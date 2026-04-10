@@ -89,7 +89,7 @@ final class CaptureSession {
             return nil
         }
 
-        var confidenceFilename: String?
+        let confidenceFilename: String? = nil
         if #available(iOS 14.0, *),
            let confidenceMap = converted.cameraCalibrationData {
             // Confidence data is not directly on cameraCalibrationData;
@@ -204,6 +204,42 @@ final class CaptureSession {
             return filename
         } catch {
             print("Failed to save point cloud: \(error)")
+            return nil
+        }
+    }
+
+    func saveMesh(vertices: [(x: Float, y: Float, z: Float, r: UInt8, g: UInt8, b: UInt8)],
+                  faces: [(v0: Int, v1: Int, v2: Int)]) -> String? {
+        let filename = "mesh.ply"
+        let fileURL = sessionDirectory.appendingPathComponent(filename)
+
+        var ply = "ply\n"
+        ply += "format ascii 1.0\n"
+        ply += "element vertex \(vertices.count)\n"
+        ply += "property float x\n"
+        ply += "property float y\n"
+        ply += "property float z\n"
+        ply += "property uchar red\n"
+        ply += "property uchar green\n"
+        ply += "property uchar blue\n"
+        ply += "element face \(faces.count)\n"
+        ply += "property list uchar int vertex_indices\n"
+        ply += "end_header\n"
+
+        for v in vertices {
+            ply += "\(v.x) \(v.y) \(v.z) \(v.r) \(v.g) \(v.b)\n"
+        }
+
+        for f in faces {
+            ply += "3 \(f.v0) \(f.v1) \(f.v2)\n"
+        }
+
+        do {
+            try ply.write(to: fileURL, atomically: true, encoding: .utf8)
+            print("[Mesh] Saved mesh to \(filename): \(vertices.count) vertices, \(faces.count) faces")
+            return filename
+        } catch {
+            print("Failed to save mesh: \(error)")
             return nil
         }
     }

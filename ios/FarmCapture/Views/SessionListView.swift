@@ -1,6 +1,19 @@
 import SwiftUI
 import CoreLocation
 
+struct SessionSizeBreakdown {
+    var images: Int64 = 0
+    var depth: Int64 = 0
+    var confidence: Int64 = 0
+    var pointCloud: Int64 = 0
+    var worldMap: Int64 = 0
+    var metadata: Int64 = 0
+
+    var total: Int64 {
+        images + depth + confidence + pointCloud + worldMap + metadata
+    }
+}
+
 struct SessionInfo: Identifiable {
     let id = UUID()
     let folderName: String
@@ -8,6 +21,7 @@ struct SessionInfo: Identifiable {
     let frameCount: Int
     let date: Date?
     let distance: Double
+    let sizeBreakdown: SessionSizeBreakdown
 }
 
 struct SessionListView: View {
@@ -57,8 +71,15 @@ struct SessionListView: View {
 
     private func sessionRow(_ session: SessionInfo) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(formattedDate(session.date))
-                .font(.headline)
+            HStack {
+                Text(formattedDate(session.date))
+                    .font(.headline)
+                Spacer()
+                Text(formattedSize(session.sizeBreakdown.total))
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.blue)
+            }
 
             HStack(spacing: 16) {
                 Label("\(session.frameCount) frames", systemImage: "photo.stack")
@@ -66,8 +87,32 @@ struct SessionListView: View {
             }
             .font(.caption)
             .foregroundStyle(.secondary)
+
+            sizeBreakdownRow(session.sizeBreakdown)
         }
         .padding(.vertical, 4)
+    }
+
+    private func sizeBreakdownRow(_ breakdown: SessionSizeBreakdown) -> some View {
+        let items: [(String, Int64, Color)] = [
+            ("IMG", breakdown.images, .green),
+            ("Depth", breakdown.depth, .blue),
+            ("Conf", breakdown.confidence, .cyan),
+            ("Map", breakdown.worldMap, .orange),
+            ("PLY", breakdown.pointCloud, .purple),
+        ].filter { $0.1 > 0 }
+        .sorted { $0.1 > $1.1 }
+
+        return HStack(spacing: 8) {
+            ForEach(items.prefix(4), id: \.0) { label, bytes, color in
+                HStack(spacing: 2) {
+                    Circle().fill(color).frame(width: 6, height: 6)
+                    Text("\(label) \(formattedSize(bytes))")
+                }
+            }
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
     }
 
     private func formattedDate(_ date: Date?) -> String {
@@ -112,12 +157,15 @@ struct SessionListView: View {
                 distance = computeDistance(from: snapshots)
             }
 
+            let sizeBreakdown = computeSizeBreakdown(folderURL)
+
             return SessionInfo(
                 folderName: folderName,
                 folderURL: folderURL,
                 frameCount: jpgFiles.count,
                 date: date,
-                distance: distance
+                distance: distance,
+                sizeBreakdown: sizeBreakdown
             )
         }
         .sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
@@ -145,6 +193,44 @@ struct SessionListView: View {
             prevLon = lon
         }
         return total
+    }
+
+    private func computeSizeBreakdown(_ folderURL: URL) -> SessionSizeBreakdown {
+        var breakdown = SessionSizeBreakdown()
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: folderURL, includingPropertiesForKeys: [.fileSizeKey]
+        ) else { return breakdown }
+
+        for file in files {
+            let size = (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
+            let name = file.lastPathComponent
+            let ext = file.pathExtension.lowercased()
+
+            if ext == "jpg" || ext == "jpeg" {
+                breakdown.images += size
+            } else if name.hasPrefix("depth_") && ext == "png" {
+                breakdown.depth += size
+            } else if name.hasPrefix("confidence_") && ext == "png" {
+                breakdown.confidence += size
+            } else if name == "pointcloud.ply" {
+                breakdown.pointCloud += size
+            } else if name == "world_map.arworldmap" {
+                breakdown.worldMap += size
+            } else if name == "session_metadata.json" {
+                breakdown.metadata += size
+            } else {
+                breakdown.metadata += size
+            }
+        }
+        return breakdown
+    }
+
+    private func formattedSize(_ bytes: Int64) -> String {
+        if bytes >= 1_073_741_824 {
+            return String(format: "%.1f GB", Double(bytes) / 1_073_741_824)
+        } else {
+            return String(format: "%.1f MB", Double(bytes) / 1_048_576)
+        }
     }
 
     private func deleteSessions(at offsets: IndexSet) {

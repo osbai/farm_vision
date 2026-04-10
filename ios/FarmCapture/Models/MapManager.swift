@@ -1,6 +1,7 @@
 import Foundation
 import CoreLocation
 import MapKit
+import Combine
 
 // MARK: - Bounding Box
 
@@ -85,7 +86,7 @@ class MapManager: ObservableObject {
 
     private let encoder: JSONEncoder = {
         let enc = JSONEncoder()
-        enc.dateDecodingStrategy = .iso8601
+        enc.dateEncodingStrategy = .iso8601
         enc.outputFormatting = [.prettyPrinted, .sortedKeys]
         return enc
     }()
@@ -230,6 +231,15 @@ class MapManager: ObservableObject {
         if !stale.isEmpty {
             print("[MapManager] Cleaned up \(stale.count) stale sectors")
         }
+    }
+
+    // MARK: - Public Accessors
+
+    func pointCloudURL(for sector: MapSector) -> URL? {
+        guard sector.pointCloudPath != nil else { return nil }
+        return mapsDirectory
+            .appendingPathComponent(sector.sectorId)
+            .appendingPathComponent("pointcloud.ply")
     }
 
     // MARK: - Point Cloud Association

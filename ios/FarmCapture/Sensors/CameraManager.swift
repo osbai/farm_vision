@@ -28,6 +28,8 @@ final class ARKitManager: NSObject, ObservableObject {
     weak var delegate: ARKitManagerDelegate?
     private let processingQueue = DispatchQueue(label: "com.farmcapture.arkit")
     private let ciContext = CIContext()
+    private var lastFrameTime: TimeInterval = 0
+    private let minFrameInterval: TimeInterval = 0.1
 
     func configure() {
         arSession.delegate = self
@@ -121,6 +123,10 @@ final class ARKitManager: NSObject, ObservableObject {
 
 extension ARKitManager: ARSessionDelegate {
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
+        let now = frame.timestamp
+        guard now - lastFrameTime >= minFrameInterval else { return }
+        lastFrameTime = now
+
         processingQueue.async { [weak self] in
             guard let self = self else { return }
 

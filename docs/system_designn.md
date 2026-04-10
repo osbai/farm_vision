@@ -48,8 +48,8 @@ These components run at 30fps on-device:
 
 **Online action**: Accumulate mesh anchors into a growing scene mesh. This is your **real-time 3D map preview**.
 
-### 4. GPS + Heading Geo-Tagging
-**Online action**: Tag each keyrig/keyframe with GPS + heading data. The existing `GeoInfoData` struct already supports this:
+### 4. GPS-Aided VIO Fusion (Online Drift Correction)
+**Online action**: Fuse GPS as a **soft constraint** into the VIO pipeline for real-time drift correction. The existing `GeoInfoData` struct carries the measurements:
 ```cpp
 struct GeoInfoData {
   double latitudeDeg, longitudeDeg;
@@ -57,7 +57,34 @@ struct GeoInfoData {
   GeoInfoSource source; // GPS, WPS, MapperEstimation
 };
 ```
-**GPS is NOT used as an optimization constraint online** — just stored. GPS noise (3-10m outdoor) would hurt real-time tracking if naively fused.
+**GPS is used online as a lightweight fusion constraint** — not as the primary tracking signal, but as a periodic absolute position anchor that bounds VIO drift. Because GPS uncertainty (2–5m) is orders of magnitude larger than VIO's local precision (mm–cm), GPS naturally acts as a gentle pull rather than overriding visual-inertial tracking.
+
+**Coordinate frame alignment**: A 4-DOF transform (3D translation + yaw) aligns VIO's local frame with GPS's global frame (WGS84 → ECEF → ENU). This transform is estimated online from the first few GPS-VIO correspondences and refined as more measurements arrive. Roll and pitch are observable from gravity, so only yaw needs explicit alignment.
+
+#### GPS-VIO Fusion Algorithm
+Two viable approaches, in order of complexity:
+
+**Option A — Error-State EKF (lightweight, recommended for mobile)**:
+- **IMU preintegration** (Forster et al., 2017) provides high-rate state propagation at 100–200Hz
+- Visual features from ARKit constrain relative motion (sub-cm precision)
+- GPS provides periodic absolute position updates at 1–10Hz, injected as measurement updates weighted by covariance:
+  - IMU: mm-level uncertainty
+  - Visual: sub-cm uncertainty
+  - GPS: 2–5m uncertainty (`horizontalUncertaintyM`)
+- The covariance weighting means GPS naturally acts as a **soft constraint** — it confirms and reduces drift without disrupting local tracking
+- Heading from magnetometer + gyroscope fusion (`trueNorthHeading`) injected as a heading prior, with GPS-derived heading from velocity vector used when moving fast enough (>1 m/s) for improved yaw observability
+
+**Option B — Sliding-window factor graph**:
+- Similar to VINS-Fusion / ORB-SLAM3 / Kimera architecture
+- IMU preintegration factors between consecutive keyframes
+- Visual reprojection factors from feature tracks
+- GPS prior factors on keyframe positions (weighted by `1/σ_gps`)
+- Heading prior factors from magnetometer/velocity
+- Marginalization of old states to keep the window bounded
+
+**GPS outlier rejection**: Switchable constraints / max-mixture models handle GPS outliers from multipath, urban canyons, or poor satellite geometry. When GPS `horizontalUncertaintyM` exceeds a threshold (e.g., >10m) or the Mahalanobis distance between predicted and measured position is too large, the GPS measurement is down-weighted or rejected entirely.
+
+**Reference systems**: VINS-Fusion, ROVIO, ORB-SLAM3, Kimera all implement variants of GPS-VIO fusion and can serve as architectural references.
 
 ### 5. Keyframe Selection + Feature Extraction
 **Online action**: Select keyframes (every ~0.5m movement or ~15° rotation), extract binary descriptors (256-bit FREAK-like), store with depth and GPS tag.
@@ -79,6 +106,8 @@ These are too expensive or require cross-session data:
 - **GPS prior**: Anchor keyrig positions to WGS84 coordinates (weighted by `horizontalUncertaintyM`)
 - **Depth prior**: Constrain map point depths using LiDAR measurements
 - **Gravity prior**: Already exists (`PoseGravityPriorErrorTerm`)
+
+**Relationship to online GPS-VIO fusion**: The online fusion (Section 4) provides lightweight real-time drift correction using an Error-State EKF or sliding-window factor graph. Offline Global BA performs **full joint optimization** over the entire session — all keyrigs, all 3D points, all GPS measurements simultaneously — with Schur complement and Levenberg-Marquardt. The online fusion bounds drift in real-time; the offline BA produces the globally optimal solution.
 
 **Why offline?** Global BA is O(n³) in keyframes. Meta's custom optimizer (`arvr/libraries/optimizer/`) supports Schur complement + LM and is extensible — adding `GpsPriorErrorTerm` and `DepthPriorErrorTerm` follows the same pattern as existing error terms.
 
@@ -150,43 +179,45 @@ DepthPriorErrorTerm: ||depth_triangulated - depth_lidar|| weighted by 1/σ_depth
 ## Architecture Diagram
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     ONLINE (iPhone)                          │
-│                                                              │
-│  Camera ──→ ARKit SLAM ──→ 6DoF Pose ──→ Keyframe Selection │
-│              │                              │                │
-│  LiDAR  ──→ Dense Depth ─────────────────→ │                │
-│              │                              │                │
-│  GPS    ──→ GeoTag ──────────────────────→  │                │
-│  Heading     │                              │                │
-│  Attitude    │                              ▼                │
-│              │                        Local Map              │
-│              ▼                     (keyrigs + points         │
-│         ARKit Mesh                  + descriptors            │
-│         (real-time                  + depth + GPS)           │
-│          3D preview)                     │                   │
-│                                          │ VRS Recording     │
-│              Relocalization ◄────────────┤                   │
-│              (if map exists)             │                   │
-└──────────────────────────────────────────┼───────────────────┘
-                                           │ Upload
-                                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    OFFLINE (Server)                           │
-│                                                              │
-│  VRS Replay ──→ Global BA ──→ Dense Recon ──→ Texture Map   │
-│                 (+ GPS priors)  (TSDF/Neural)    │           │
-│                 (+ depth priors)                  │           │
-│                      │                            ▼           │
-│                      ▼                     Refined 3D Mesh   │
-│                Cross-Session                     │           │
-│                Map Merge                         ▼           │
-│                      │                     PLY/glTF Export   │
-│                      ▼                                       │
-│                Compact Reloc Map ──→ Descriptor Index        │
-│                (for download)        + GPS spatial index     │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                       ONLINE (iPhone)                            │
+│                                                                  │
+│  Camera ──→ ARKit SLAM ──→ 6DoF Pose ──→ Keyframe Selection     │
+│              │                 ▲              │                  │
+│  LiDAR  ──→ Dense Depth ──────┼────────────→ │                  │
+│              │                │              │                  │
+│  GPS    ──→ GPS-VIO Fusion ───┘              │                  │
+│  Heading ─→ (drift correction               │                  │
+│  Attitude   via Error-State EKF)             ▼                  │
+│              │                         Local Map                │
+│              ▼                      (keyrigs + points           │
+│         ARKit Mesh                   + descriptors              │
+│         (real-time                   + depth + GPS)             │
+│          3D preview)                      │                     │
+│                                           │ VRS Recording       │
+│              Relocalization ◄─────────────┤                     │
+│              (if map exists)              │                     │
+└───────────────────────────────────────────┼─────────────────────┘
+                                            │ Upload
+                                            ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                      OFFLINE (Server)                            │
+│                                                                  │
+│  VRS Replay ──→ Global BA ──→ Dense Recon ──→ Texture Map       │
+│                 (+ GPS priors)  (TSDF/Neural)    │              │
+│                 (+ depth priors)                  │              │
+│                      │                            ▼              │
+│                      ▼                     Refined 3D Mesh      │
+│                Cross-Session                     │              │
+│                Map Merge                         ▼              │
+│                      │                     PLY/glTF Export      │
+│                      ▼                                          │
+│                Compact Reloc Map ──→ Descriptor Index           │
+│                (for download)        + GPS spatial index        │
+└──────────────────────────────────────────────────────────────────┘
 ```
+
+**GPS-VIO fusion feedback loop**: GPS feeds into the tracking pipeline as a measurement update (not a passive side-channel). The arrow from `GPS-VIO Fusion` back up to `6DoF Pose` represents the drift correction — GPS constrains the VIO state estimate, and the corrected pose flows forward into keyframe selection and map building.
 
 ---
 
@@ -203,11 +234,12 @@ DepthPriorErrorTerm: ||depth_triangulated - depth_lidar|| weighted by 1/σ_depth
 | Loop closure | ✅ Full | In-context + cross-context |
 | Map merging | ✅ Full | `CrossContextMerge` + `InContextL1FullMerge` |
 | Depth densification | ✅ Partial | `DepthDensifier` (post-hoc, not in BA) |
-| GPS prior in BA | ❌ **Build** | Add `GpsPriorErrorTerm` to optimizer |
+| GPS-VIO online fusion | ❌ **Build** | Error-State EKF or sliding-window factor graph with GPS soft constraints |
+| GPS prior in BA (offline) | ❌ **Build** | Add `GpsPriorErrorTerm` to optimizer (full global optimization) |
 | Depth prior in BA | ❌ **Build** | Add `DepthPriorErrorTerm` to optimizer |
 | Dense mesh reconstruction | ❌ **Build** | TSDF fusion or neural (server-side) |
 | PLY/glTF export | ❌ **Build** | File export from refined mesh |
 | GPS-aided map retrieval | ⚠️ Partial | `PosePriorSubmapListProvider` exists, needs GPS→pose bridge |
 | Compact map download | ⚠️ Partial | `VegaMapFlatFile` exists, need mobile-optimized subset |
 
-The heaviest new work is **(1)** GPS + depth error terms in the optimizer, **(2)** dense mesh reconstruction pipeline, and **(3)** compact map download/relocalization flow. Everything else can be composed from existing infrastructure.
+The heaviest new work is **(1)** GPS-VIO online fusion (Error-State EKF with switchable GPS constraints + coordinate frame alignment), **(2)** GPS + depth error terms in the offline optimizer, **(3)** dense mesh reconstruction pipeline, and **(4)** compact map download/relocalization flow. Everything else can be composed from existing infrastructure.

@@ -4,11 +4,19 @@ import MapKit
 struct SessionDetailView: View {
     let sessionURL: URL
     @State private var snapshots: [SensorSnapshot] = []
+    @State private var sizeBreakdown: SessionSizeBreakdown?
+
     @State private var selectedFrameIndex: Int?
 
     var body: some View {
         List {
             statsSection
+            if let breakdown = sizeBreakdown {
+                storageSection(breakdown)
+            }
+            if hasPointCloud {
+                pointCloudSection
+            }
             if !gpsCoordinates.isEmpty {
                 mapSection
             }
@@ -17,7 +25,7 @@ struct SessionDetailView: View {
         .listStyle(.insetGrouped)
         .navigationTitle(sessionTitle)
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear { loadMetadata() }
+        .onAppear { loadMetadata(); loadSizeBreakdown() }
         .fullScreenCover(item: selectedFrameBinding) { selection in
             FrameDetailView(
                 snapshots: snapshots,
@@ -31,6 +39,21 @@ struct SessionDetailView: View {
 
     private var depthFrameCount: Int {
         snapshots.filter { $0.hasDepth }.count
+    }
+
+    private var hasPointCloud: Bool {
+        FileManager.default.fileExists(atPath: sessionURL.appendingPathComponent("pointcloud.ply").path) ||
+        FileManager.default.fileExists(atPath: sessionURL.appendingPathComponent("mesh.ply").path)
+    }
+
+    private var hasWorldMap: Bool {
+        FileManager.default.fileExists(atPath: sessionURL.appendingPathComponent("world_map.arworldmap").path)
+    }
+
+    private var meshURL: URL {
+        let meshPath = sessionURL.appendingPathComponent("mesh.ply")
+        if FileManager.default.fileExists(atPath: meshPath.path) { return meshPath }
+        return sessionURL.appendingPathComponent("pointcloud.ply")
     }
 
     private var statsSection: some View {
@@ -47,6 +70,10 @@ struct SessionDetailView: View {
                         title: "Depth Frames",
                         value: "\(depthFrameCount)/\(snapshots.count)"
                     )
+                }
+
+                if hasWorldMap {
+                    statCard(icon: "map.fill", title: "World Map", value: "Available")
                 }
             }
         }
@@ -70,6 +97,106 @@ struct SessionDetailView: View {
         .padding(10)
         .background(.ultraThinMaterial)
         .cornerRadius(10)
+    }
+
+    // MARK: - Storage
+
+    private func storageSection(_ breakdown: SessionSizeBreakdown) -> some View {
+        Section("Storage (\(formattedSize(breakdown.total)))") {
+            let items: [(String, String, Int64, Color)] = [
+                ("photo.fill", "Images", breakdown.images, .green),
+                ("cube.transparent.fill", "Depth Maps", breakdown.depth, .blue),
+                ("waveform.badge.magnifyingglass", "Confidence Maps", breakdown.confidence, .cyan),
+                ("map.fill", "World Map", breakdown.worldMap, .orange),
+                ("cube.fill", "Point Cloud", breakdown.pointCloud, .purple),
+                ("doc.text.fill", "Metadata", breakdown.metadata, .gray),
+            ]
+            .filter { $0.2 > 0 }
+            .sorted { $0.2 > $1.2 }
+
+            ForEach(items, id: \.1) { icon, label, bytes, color in
+                HStack {
+                    Image(systemName: icon)
+                        .foregroundStyle(color)
+                        .frame(width: 24)
+                    Text(label)
+                    Spacer()
+                    Text(formattedSize(bytes))
+                        .foregroundStyle(.secondary)
+                    Text(String(format: "%.0f%%", Double(bytes) / Double(max(breakdown.total, 1)) * 100))
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .frame(width: 36, alignment: .trailing)
+                }
+            }
+
+            // Bar chart
+            GeometryReader { geo in
+                HStack(spacing: 1) {
+                    let sorted = items.filter { $0.2 > 0 }
+                    ForEach(sorted, id: \.1) { _, _, bytes, color in
+                        let fraction = CGFloat(bytes) / CGFloat(max(breakdown.total, 1))
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(color)
+                            .frame(width: max(fraction * geo.size.width, 2))
+                    }
+                }
+            }
+            .frame(height: 8)
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+        }
+    }
+
+    private func formattedSize(_ bytes: Int64) -> String {
+        if bytes >= 1_073_741_824 {
+            return String(format: "%.1f GB", Double(bytes) / 1_073_741_824)
+        } else if bytes >= 1_048_576 {
+            return String(format: "%.1f MB", Double(bytes) / 1_048_576)
+        } else {
+            return String(format: "%.0f KB", Double(bytes) / 1_024)
+        }
+    }
+
+    private func loadSizeBreakdown() {
+        var breakdown = SessionSizeBreakdown()
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: sessionURL, includingPropertiesForKeys: [.fileSizeKey]
+        ) else { return }
+
+        for file in files {
+            let size = (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
+            let name = file.lastPathComponent
+            let ext = file.pathExtension.lowercased()
+
+            if ext == "jpg" || ext == "jpeg" {
+                breakdown.images += size
+            } else if name.hasPrefix("depth_") && ext == "png" {
+                breakdown.depth += size
+            } else if name.hasPrefix("confidence_") && ext == "png" {
+                breakdown.confidence += size
+            } else if name == "pointcloud.ply" {
+                breakdown.pointCloud += size
+            } else if name == "world_map.arworldmap" {
+                breakdown.worldMap += size
+            } else if name == "session_metadata.json" {
+                breakdown.metadata += size
+            } else {
+                breakdown.metadata += size
+            }
+        }
+        sizeBreakdown = breakdown
+    }
+
+    // MARK: - Point Cloud
+
+    private var pointCloudSection: some View {
+        Section("3D Map") {
+            NavigationLink {
+                PointCloudView(plyURL: meshURL)
+            } label: {
+                Label("View 3D Map", systemImage: "cube.transparent")
+            }
+        }
     }
 
     // MARK: - Map
@@ -321,6 +448,7 @@ struct GPSTrailMap: UIViewRepresentable {
         let mapView = MKMapView()
         mapView.isScrollEnabled = true
         mapView.isZoomEnabled = true
+        mapView.mapType = .hybrid
         mapView.delegate = context.coordinator
         return mapView
     }
@@ -331,7 +459,10 @@ struct GPSTrailMap: UIViewRepresentable {
 
         guard coordinates.count >= 2 else { return }
 
-        let polyline = MKPolyline(coordinates: coordinates, count: coordinates.count)
+        // Downsample to avoid rendering thousands of near-identical points
+        let sampled = sampleCoordinates(coordinates, maxPoints: 500)
+
+        let polyline = MKPolyline(coordinates: sampled, count: sampled.count)
         mapView.addOverlay(polyline)
 
         if let first = coordinates.first {
@@ -348,9 +479,30 @@ struct GPSTrailMap: UIViewRepresentable {
             mapView.addAnnotation(endPin)
         }
 
-        let rect = polyline.boundingMapRect
-        let insets = UIEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
-        mapView.setVisibleMapRect(rect, edgePadding: insets, animated: false)
+        // Compute center
+        let lats = coordinates.map { $0.latitude }
+        let lons = coordinates.map { $0.longitude }
+        let centerLat = (lats.min()! + lats.max()!) / 2
+        let centerLon = (lons.min()! + lons.max()!) / 2
+        let center = CLLocationCoordinate2D(latitude: centerLat, longitude: centerLon)
+
+        // Compute span with minimum size (at least 100m visible)
+        let latSpan = max((lats.max()! - lats.min()!) * 1.5, 0.001)
+        let lonSpan = max((lons.max()! - lons.min()!) * 1.5, 0.001)
+        let region = MKCoordinateRegion(center: center, span: MKCoordinateSpan(latitudeDelta: latSpan, longitudeDelta: lonSpan))
+        mapView.setRegion(region, animated: false)
+    }
+
+    private func sampleCoordinates(_ coords: [CLLocationCoordinate2D], maxPoints: Int) -> [CLLocationCoordinate2D] {
+        guard coords.count > maxPoints else { return coords }
+        let step = Double(coords.count) / Double(maxPoints)
+        var sampled: [CLLocationCoordinate2D] = []
+        for i in 0..<maxPoints {
+            let index = min(Int(Double(i) * step), coords.count - 1)
+            sampled.append(coords[index])
+        }
+        if let last = coords.last { sampled.append(last) }
+        return sampled
     }
 
     func makeCoordinator() -> Coordinator {

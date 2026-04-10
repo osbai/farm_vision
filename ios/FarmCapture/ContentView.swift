@@ -27,7 +27,7 @@ struct ContentView: View {
                     Label("Sessions", systemImage: "folder.fill")
                 }
 
-            Text("Maps coming soon")
+            MapSectorsView()
                 .tabItem {
                     Label("Maps", systemImage: "map.fill")
                 }
@@ -37,6 +37,7 @@ struct ContentView: View {
 
 struct CaptureView: View {
     @StateObject private var sensorManager = SensorManager()
+    @State private var showMapSavedToast = false
 
     var body: some View {
         ZStack {
@@ -53,6 +54,30 @@ struct CaptureView: View {
             sensorManager.setup()
             sensorManager.startSensors()
         }
+        .onChange(of: sensorManager.mapSaved) { saved in
+            if saved {
+                showMapSavedToast = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    showMapSavedToast = false
+                    sensorManager.mapSaved = false
+                }
+            }
+        }
+        .overlay(alignment: .top) {
+            if showMapSavedToast {
+                Text("Map Saved ✓")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(Color.green.opacity(0.9))
+                    .foregroundColor(.white)
+                    .clipShape(Capsule())
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .padding(.top, 80)
+            }
+        }
+        .animation(.easeInOut, value: showMapSavedToast)
     }
 
     private var topBar: some View {
@@ -61,6 +86,15 @@ struct CaptureView: View {
             trackingIndicator
             lidarIndicator
             mappingIndicator
+            if sensorManager.mappingMode {
+                Text(sensorManager.fusionStatus)
+                    .font(.caption2)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(sensorManager.fusionStatus == "Active ✓" ? Color.green.opacity(0.8) : Color.orange.opacity(0.6))
+                    .foregroundColor(.white)
+                    .clipShape(Capsule())
+            }
             Spacer()
             if sensorManager.isSweeping {
                 sweepStats
@@ -202,7 +236,7 @@ struct CaptureView: View {
         HStack(spacing: 40) {
             manualCaptureButton
             sweepButton
-            Spacer().frame(width: 60)
+            mappingToggle
         }
         .padding(.bottom, 30)
     }
@@ -210,9 +244,17 @@ struct CaptureView: View {
     private var sweepButton: some View {
         Button(action: {
             if sensorManager.isSweeping {
-                sensorManager.stopSweep()
+                if sensorManager.mappingMode {
+                    sensorManager.stopMappingSweep()
+                } else {
+                    sensorManager.stopSweep()
+                }
             } else {
-                sensorManager.startSweep()
+                if sensorManager.mappingMode {
+                    sensorManager.startMappingSweep()
+                } else {
+                    sensorManager.startSweep()
+                }
             }
         }) {
             ZStack {
@@ -228,7 +270,33 @@ struct CaptureView: View {
                         .fill(.white)
                         .frame(width: 28, height: 28)
                 }
+
+                if sensorManager.mappingMode {
+                    Text("MAP")
+                        .font(.system(size: 9, weight: .bold))
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 2)
+                        .background(Color.orange)
+                        .foregroundColor(.white)
+                        .clipShape(Capsule())
+                        .offset(x: 0, y: -42)
+                }
             }
+        }
+    }
+
+    private var mappingToggle: some View {
+        Button(action: { sensorManager.mappingMode.toggle() }) {
+            HStack(spacing: 4) {
+                Image(systemName: sensorManager.mappingMode ? "map.fill" : "map")
+                Text(sensorManager.mappingMode ? "MAP ON" : "Map")
+                    .font(.caption)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(sensorManager.mappingMode ? Color.orange.opacity(0.9) : Color.gray.opacity(0.6))
+            .foregroundColor(.white)
+            .clipShape(Capsule())
         }
     }
 

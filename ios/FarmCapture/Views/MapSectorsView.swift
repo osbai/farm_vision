@@ -12,12 +12,14 @@ extension BoundingBox {
             CLLocationCoordinate2D(latitude: minLat, longitude: minLon),
         ]
     }
+
 }
 
 // MARK: - MapSectorsView
 
 struct MapSectorsView: View {
     @StateObject private var mapManager = MapManager()
+    @State private var selectedSector: MapSector?
 
     var body: some View {
         NavigationStack {
@@ -40,6 +42,18 @@ struct MapSectorsView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     sectorList
+                }
+            }
+            .sheet(item: $selectedSector) { sector in
+                NavigationStack {
+                    sectorDetailView(sector)
+                        .navigationTitle(sector.sectorId)
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("Done") { selectedSector = nil }
+                            }
+                        }
                 }
             }
         }
@@ -70,11 +84,30 @@ struct MapSectorsView: View {
         .cornerRadius(16)
     }
 
+    private func sectorDetailView(_ sector: MapSector) -> some View {
+        VStack(spacing: 16) {
+            Text(sector.sectorId).font(.headline)
+            Text("Captured: \(sector.captureDate.formatted())")
+            Text("Frames: \(sector.frameCount)")
+            Text("Version: \(sector.version)")
+
+            if let plyURL = mapManager.pointCloudURL(for: sector) {
+                NavigationLink {
+                    PointCloudView(plyURL: plyURL)
+                } label: {
+                    Label("View 3D Map", systemImage: "cube.transparent")
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding()
+    }
+
     private var sectorList: some View {
         Menu {
             ForEach(mapManager.sectors) { sector in
                 Button {
-                    // Focus on sector
+                    selectedSector = sector
                 } label: {
                     Label {
                         VStack(alignment: .leading) {

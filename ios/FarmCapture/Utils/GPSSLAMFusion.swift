@@ -1,6 +1,7 @@
 import Foundation
 import CoreLocation
 import simd
+import Combine
 
 class GPSSLAMFusion: ObservableObject {
 
@@ -75,7 +76,7 @@ class GPSSLAMFusion: ObservableObject {
     }
 
     func wgs84ToArkit(coordinate: CLLocationCoordinate2D) -> simd_float3? {
-        guard isInitialized, let ref = referenceLocation else { return nil }
+        guard isInitialized, referenceLocation != nil else { return nil }
         let loc = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
         let enu = wgs84ToENU(location: loc)
         return applyInverseTransform(enu)

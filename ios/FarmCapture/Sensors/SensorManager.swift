@@ -9,8 +9,14 @@ final class SensorManager: ObservableObject {
     let locationManager = LocationManager()
     let motionManager = MotionManager()
     let arkitManager = ARKitManager()
+    let mapManager = MapManager()
+    let gpsFusion = GPSSLAMFusion()
+    let relocalizationEngine: RelocalizationEngine
 
     @Published var isSweeping = false
+    @Published var mappingMode: Bool = false
+    @Published var fusionStatus: String = "Idle"
+    @Published var mapSaved: Bool = false
     @Published var framesCaptured: Int = 0
     @Published var sessionDuration: TimeInterval = 0
     @Published var distanceWalked: Double = 0
@@ -20,6 +26,8 @@ final class SensorManager: ObservableObject {
     @Published var worldMappingStatus: String = "notAvailable"
     var latestImageData: Data?
     var latestDepthBuffer: CVPixelBuffer?
+    private var pointCloudVertices: [(x: Float, y: Float, z: Float, r: UInt8, g: UInt8, b: UInt8)] = []
+    private var mappingFrameCounter = 0
 
     private(set) var captureSession: CaptureSession?
     private let capturePolicy = AdaptiveCapturePolicy()
@@ -31,6 +39,7 @@ final class SensorManager: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
 
     init() {
+        relocalizationEngine = RelocalizationEngine(mapManager: mapManager)
         arkitManager.delegate = self
         arkitManager.$isLiDARAvailable
             .receive(on: DispatchQueue.main)
@@ -41,6 +50,9 @@ final class SensorManager: ObservableObject {
         arkitManager.$worldMappingStatus
             .receive(on: DispatchQueue.main)
             .assign(to: &$worldMappingStatus)
+        gpsFusion.$fusionStatus
+            .receive(on: DispatchQueue.main)
+            .assign(to: &$fusionStatus)
     }
 
     func setup() {
@@ -80,10 +92,56 @@ final class SensorManager: ObservableObject {
         isSweeping = true
     }
 
+    func startMappingSweep() {
+        mappingMode = true
+        pointCloudVertices = []
+        mappingFrameCounter = 0
+        startSweep()
+    }
+
+    func stopMappingSweep() {
+        arkitManager.getCurrentWorldMap { [weak self] worldMap in
+            guard let self = self, let map = worldMap else { return }
+            let mapData = try? NSKeyedArchiver.archivedData(withRootObject: map, requiringSecureCoding: true)
+            if let data = mapData {
+                _ = self.captureSession?.saveWorldMap(data)
+
+                if let lat = self.locationManager.latitude, let lon = self.locationManager.longitude {
+                    let center = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+                    let bounds = self.computeSessionBounds()
+                    let _ = self.mapManager.saveWorldMap(data, center: center, bounds: bounds,
+                                                          frameCount: self.captureSession?.snapshotCount ?? 0)
+                }
+            }
+
+            if !self.pointCloudVertices.isEmpty {
+                let _ = self.captureSession?.savePointCloud(vertices: self.pointCloudVertices)
+            }
+
+            DispatchQueue.main.async {
+                self.mapSaved = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { self.mapSaved = false }
+            }
+
+            self.mappingMode = false
+            self.stopSweep()
+        }
+    }
+
+    func startRelocalization() {
+        guard let loc = locationManager.lastLocation else { return }
+        relocalizationEngine.startRelocalization(arkitManager: arkitManager, currentLocation: loc)
+    }
+
     func stopSweep() {
         isSweeping = false
         durationTimer?.invalidate()
         durationTimer = nil
+
+        // Save ARKit mesh reconstruction if available
+        if let session = captureSession {
+            saveARKitMesh(to: session)
+        }
 
         captureSession?.saveMetadata()
 
@@ -92,6 +150,68 @@ final class SensorManager: ObservableObject {
         sessionDuration = 0
         distanceWalked = 0
         currentFPS = 0
+    }
+
+    // MARK: - ARKit Mesh Extraction
+
+    private func saveARKitMesh(to session: CaptureSession) {
+        let anchors = arkitManager.arSession.currentFrame?.anchors ?? []
+        let meshAnchors = anchors.compactMap { $0 as? ARMeshAnchor }
+
+        guard !meshAnchors.isEmpty else {
+            print("[Mesh] No mesh anchors available")
+            return
+        }
+
+        var allVertices: [(x: Float, y: Float, z: Float, r: UInt8, g: UInt8, b: UInt8)] = []
+        var allFaces: [(v0: Int, v1: Int, v2: Int)] = []
+        var vertexOffset = 0
+
+        for anchor in meshAnchors {
+            let geometry = anchor.geometry
+            let transform = anchor.transform
+
+            // Extract vertices and transform to world space
+            let vertexBuffer = geometry.vertices
+            for i in 0..<vertexBuffer.count {
+                let vertexPointer = vertexBuffer.buffer.contents().advanced(by: vertexBuffer.offset + vertexBuffer.stride * i)
+                let vertex = vertexPointer.assumingMemoryBound(to: SIMD3<Float>.self).pointee
+
+                let worldPoint = transform * SIMD4<Float>(vertex.x, vertex.y, vertex.z, 1.0)
+
+                // Color by height (green for low/ground, brown for higher/plants)
+                let height = worldPoint.y
+                let r: UInt8, g: UInt8, b: UInt8
+                if height < 0.3 {
+                    r = 139; g = 119; b = 101  // brown (ground)
+                } else if height < 1.0 {
+                    r = 34; g = 139; b = 34    // green (low vegetation)
+                } else {
+                    r = 0; g = 100; b = 0      // dark green (tall vegetation)
+                }
+
+                allVertices.append((x: worldPoint.x, y: worldPoint.y, z: worldPoint.z, r: r, g: g, b: b))
+            }
+
+            // Extract faces
+            let faceBuffer = geometry.faces
+            for i in 0..<faceBuffer.count {
+                let facePointer = faceBuffer.buffer.contents().advanced(by: faceBuffer.indexCountPerPrimitive * faceBuffer.bytesPerIndex * i)
+                let indices = facePointer.assumingMemoryBound(to: UInt32.self)
+                allFaces.append((
+                    v0: Int(indices[0]) + vertexOffset,
+                    v1: Int(indices[1]) + vertexOffset,
+                    v2: Int(indices[2]) + vertexOffset
+                ))
+            }
+
+            vertexOffset += vertexBuffer.count
+        }
+
+        print("[Mesh] Extracted \(allVertices.count) vertices, \(allFaces.count) faces from \(meshAnchors.count) anchors")
+
+        // Save as PLY with mesh faces
+        let _ = session.saveMesh(vertices: allVertices, faces: allFaces)
     }
 
     func captureManualFrame(imageData: Data) {
@@ -222,6 +342,15 @@ final class SensorManager: ObservableObject {
         )
         session.addSnapshot(snapshot)
 
+        if mappingMode, let depth = depthBuffer, let p = pose, let intr = intrinsics {
+            mappingFrameCounter += 1
+            if mappingFrameCounter % 5 == 0 && pointCloudVertices.count < 500_000 {
+                let vertices = unprojectDepthToPoints(depth: depth, pose: p, intrinsics: intr,
+                                                       imageData: imageData)
+                pointCloudVertices.append(contentsOf: vertices)
+            }
+        }
+
         DispatchQueue.main.async { [weak self] in
             self?.framesCaptured = session.snapshotCount
         }
@@ -254,6 +383,56 @@ final class SensorManager: ObservableObject {
         }
     }
 
+    private func unprojectDepthToPoints(depth: CVPixelBuffer, pose: simd_float4x4,
+                                         intrinsics: simd_float3x3, imageData: Data)
+        -> [(x: Float, y: Float, z: Float, r: UInt8, g: UInt8, b: UInt8)] {
+        CVPixelBufferLockBaseAddress(depth, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(depth, .readOnly) }
+
+        let w = CVPixelBufferGetWidth(depth)
+        let h = CVPixelBufferGetHeight(depth)
+        guard let base = CVPixelBufferGetBaseAddress(depth) else { return [] }
+        let floats = base.assumingMemoryBound(to: Float32.self)
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(depth) / MemoryLayout<Float32>.size
+
+        let fx = intrinsics.columns.0.x
+        let fy = intrinsics.columns.1.y
+        let cx = intrinsics.columns.2.x
+        let cy = intrinsics.columns.2.y
+
+        var points: [(x: Float, y: Float, z: Float, r: UInt8, g: UInt8, b: UInt8)] = []
+
+        let step = 8
+        for y in stride(from: 0, to: h, by: step) {
+            for x in stride(from: 0, to: w, by: step) {
+                let d = floats[y * bytesPerRow + x]
+                guard d > 0.1 && d < 5.0 else { continue }
+
+                let camX = (Float(x) - cx) * d / fx
+                let camY = (Float(y) - cy) * d / fy
+                let camZ = d
+                let camPoint = simd_float4(camX, -camY, -camZ, 1)
+
+                let worldPoint = pose * camPoint
+
+                points.append((x: worldPoint.x, y: worldPoint.y, z: worldPoint.z,
+                               r: 200, g: 200, b: 200))
+            }
+        }
+        return points
+    }
+
+    private func computeSessionBounds() -> BoundingBox {
+        var minLat = 90.0, maxLat = -90.0, minLon = 180.0, maxLon = -180.0
+        if let lat = locationManager.latitude, let lon = locationManager.longitude {
+            minLat = min(minLat, lat); maxLat = max(maxLat, lat)
+            minLon = min(minLon, lon); maxLon = max(maxLon, lon)
+        }
+        let padding = 0.0005
+        return BoundingBox(minLat: minLat - padding, minLon: minLon - padding,
+                           maxLat: maxLat + padding, maxLon: maxLon + padding)
+    }
+
     private func updateFPS(timestamp: TimeInterval) {
         fpsTimestamps.append(timestamp)
         let cutoff = timestamp - 1.0
@@ -269,7 +448,7 @@ final class SensorManager: ObservableObject {
 extension SensorManager: ARKitManagerDelegate {
     func arkitManager(_ manager: ARKitManager, didUpdate frameData: ARFrameData) {
         latestImageData = frameData.imageData
-        latestDepthBuffer = frameData.depthMap
+        latestDepthBuffer = nil
 
         guard isSweeping, let session = captureSession else { return }
 
@@ -296,6 +475,10 @@ extension SensorManager: ARKitManagerDelegate {
         let trackingState = trackingStateString(frameData.trackingState)
         let trackingReason = trackingReasonString(frameData.trackingState)
         let mappingStatus = worldMappingStatusString(frameData.worldMappingStatus)
+
+        if mappingMode, let loc = locationManager.lastLocation {
+            gpsFusion.addObservation(arkitPose: frameData.pose, gpsLocation: loc)
+        }
 
         processingQueue.async { [weak self] in
             self?.processFrame(

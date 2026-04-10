@@ -30,30 +30,32 @@ struct FrameDetailView: View {
     }
 
     var body: some View {
-        ZStack {
-            // Full-screen map background
-            FrameTrailMapView(
-                coordinates: gpsCoordinates,
-                currentCoordinate: currentCoordinate
-            )
-            .ignoresSafeArea()
+        GeometryReader { geometry in
+            ZStack {
+                // Full-screen map background
+                FrameTrailMapView(
+                    coordinates: gpsCoordinates,
+                    currentCoordinate: currentCoordinate
+                )
+                .ignoresSafeArea()
 
-            // Top bar
-            VStack(spacing: 0) {
-                topBar
-                Spacer()
-            }
+                // Top bar
+                VStack(spacing: 0) {
+                    topBar
+                    Spacer()
+                }
 
-            // Bottom image card + controls
-            VStack(spacing: 0) {
-                Spacer()
-                imageCard
+                // Bottom image card + controls
+                VStack(spacing: 0) {
+                    Spacer()
+                    imageCard(in: geometry)
+                }
             }
-        }
-        .statusBarHidden(true)
-        .onChange(of: currentIndex) { _, _ in
-            if showDepth && !currentSnapshot.hasDepth {
-                showDepth = false
+            .statusBarHidden(true)
+            .onChange(of: currentIndex) { _, _ in
+                if showDepth && !currentSnapshot.hasDepth {
+                    showDepth = false
+                }
             }
         }
     }
@@ -120,7 +122,7 @@ struct FrameDetailView: View {
 
     // MARK: - Image Card
 
-    private var imageCard: some View {
+    private func imageCard(in geometry: GeometryProxy) -> some View {
         VStack(spacing: 0) {
             // Navigation row
             navigationControls
@@ -153,8 +155,8 @@ struct FrameDetailView: View {
                 }
             }
             .frame(height: imageExpanded
-                ? UIScreen.main.bounds.height * 0.65
-                : UIScreen.main.bounds.height * 0.38)
+                ? geometry.size.height * 0.65
+                : geometry.size.height * 0.38)
             .animation(.spring(response: 0.3), value: imageExpanded)
 
             // Info toggle strip
@@ -436,7 +438,7 @@ struct FrameTrailMapView: UIViewRepresentable {
             mapView.setRegion(region, animated: true)
         } else if !coordinates.isEmpty {
             let rect = MKPolyline(coordinates: coordinates, count: coordinates.count).boundingMapRect
-            let insets = UIEdgeInsets(top: 60, left: 40, bottom: UIScreen.main.bounds.height * 0.45, right: 40)
+            let insets = UIEdgeInsets(top: 60, left: 40, bottom: mapView.bounds.height * 0.45, right: 40)
             mapView.setVisibleMapRect(rect, edgePadding: insets, animated: false)
         }
     }
