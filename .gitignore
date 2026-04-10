@@ -50,3 +50,6 @@ logs/
 # Distribution
 *.tar.gz
 *.zip
+
+# Tiles
+tiles/
