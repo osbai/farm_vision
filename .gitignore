@@ -1,100 +1,52 @@
-# ===== Python =====
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
-
-# Distribution / packaging
-build/
-dist/
 *.egg-info/
-*.egg
+dist/
+build/
 eggs/
-wheels/
-*.whl
+*.egg
 
 # Virtual environments
 venv/
 .venv/
 env/
-ENV/
+.env
 
-# Install logs
-pip-log.txt
-pip-delete-this-directory.txt
-
-# ===== Jupyter Notebooks =====
-.ipynb_checkpoints/
-
-# ===== ML / CV model artifacts =====
-*.pt
-*.pth
-*.onnx
-*.h5
-*.hdf5
-*.tflite
-*.pb
-*.caffemodel
-*.pkl
-*.joblib
-wandb/
-runs/
-mlruns/
-
-# ===== Data artifacts =====
-# Satellite tiles (regenerable)
-tiles/
-# Output images (regenerable)
-output/
-
-# ===== Xcode / Swift =====
-*.xcuserstate
-xcuserdata/
-*.xcworkspace/xcuserdata/
-DerivedData/
-*.ipa
-*.dSYM.zip
-*.dSYM
-*.hmap
-*.xccheckout
-*.moved-aside
-*.xcscmblueprint
-Pods/
-
-# ===== IDE / Editor =====
+# IDE
 .vscode/
 .idea/
 *.swp
 *.swo
-*~
-.project
-.classpath
-.settings/
 
-# ===== OS =====
+# OS
 .DS_Store
-.DS_Store?
-._*
 Thumbs.db
-ehthumbs.db
-Desktop.ini
 
-# ===== Environment / Secrets =====
-.env
-.env.*
-!.env.example
+# Jupyter
+.ipynb_checkpoints/
 
-# ===== Logs =====
+# ML/CV model artifacts
+*.pt
+*.pth
+*.onnx
+*.h5
+*.tflite
+*.pkl
+
+# Data
+data/
+datasets/
+*.csv
+*.json
+!requirements.json
+
+# Logs
 *.log
 logs/
 
-# ===== Misc =====
-*.bak
-*.tmp
-*.cache
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-htmlcov/
-.coverage
-coverage.xml
+# Distribution
+*.tar.gz
+*.zip
